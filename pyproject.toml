@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools"]
+
+[project]
+name = "my_exe"
+version = "0.1.0"
+description = "Demo Python app with HTTP server, scheduler and exe build"
+authors = [{ name = "Your Name", email = "you@example.com" }]
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "apscheduler"
+]
