@@ -3,4 +3,4 @@ server:
 
 database:
   url: "mysql://user:pass@127.0.0.1:3306/mydb"
-  pool_size: 5
+  pool_size: 51
