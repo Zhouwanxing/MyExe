@@ -3,3 +3,5 @@ uvicorn
 apscheduler
 PyYAML
 pyinstaller
+pystray
+Pillow

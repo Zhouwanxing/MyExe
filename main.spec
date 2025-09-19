@@ -5,7 +5,7 @@ a = Analysis(
     ['MyExe/main.py'],
     pathex=['.'],
     binaries=[],
-    datas=[('config/config.yaml', 'config')],
+    datas=[('config/config.yaml', 'config'), ('jerry.ico', '.'), ('jerry.png', '.')],
     hiddenimports=['MyExe.gui', 'MyExe.server', 'MyExe.scheduler', 'MyExe.utils.config_loader', 'MyExe.utils.time_utils', 'tkinter', 'fastapi', 'uvicorn', 'yaml'],
     hookspath=[],
     hooksconfig={},
@@ -35,4 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='jerry.ico',
 )
