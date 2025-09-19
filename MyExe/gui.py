@@ -1,9 +1,18 @@
 import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
-from MyExe.server import FastAPIServer
-from MyExe.scheduler import SimpleScheduler
-from MyExe.utils.time_utils import current_datetime_str, current_date_str, current_time_str
-from MyExe.utils.config_loader import Config
+
+# 尝试不同的导入方式以兼容 PyInstaller 打包
+try:
+    from server import FastAPIServer
+    from scheduler import SimpleScheduler
+    from utils.time_utils import current_datetime_str
+    from utils.config_loader import Config
+except ImportError:
+    # 如果直接导入失败，尝试从 MyExe 包导入
+    from MyExe.server import FastAPIServer
+    from MyExe.scheduler import SimpleScheduler
+    from MyExe.utils.time_utils import current_datetime_str
+    from MyExe.utils.config_loader import Config
 
 class MyApp:
     def __init__(self, root):
