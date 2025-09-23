@@ -23,7 +23,7 @@ class MyApp:
     def __init__(self, root):
         self.root = root
         self.root.title("MyExe 控制台")
-        self.root.geometry("600x400")
+        self.root.geometry("1000x500")
         
         # 系统托盘相关
         self.tray_icon = None
@@ -121,7 +121,7 @@ class MyApp:
     def print_to_gui(self, msg):
         """将日志打印到 GUI"""
         self.log_text.configure(state='normal')
-        self.log_text.insert(tk.END, "[" + current_datetime_str() + "]:" + msg + "\n")
+        self.log_text.insert(tk.END, "[" + current_datetime_str() + "]:" + str(msg) + "\n")
         self.log_text.see(tk.END)
         self.log_text.configure(state='disabled')
 

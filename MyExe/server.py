@@ -78,13 +78,16 @@ class FastAPIServer:
             ul = soup.find(class_="sellListContent")
             if ul is None:
                 return {"status": False}
-            for li in ul.find_all("li"):
+            lis = ul.find_all("li")
+            if self.gui_logger:
+                self.gui_logger(len(lis))
+            for li in lis:
                 item_data = handle_lj(li)
                 if item_data:
-                    print(item_data)
-                    my_res = requests.post(Config.get("server.baseUrl") + "/page/user/syncLj", json=item_data,
+                    if self.gui_logger:
+                        self.gui_logger(item_data)
+                    requests.post(Config.get("server.baseUrl") + "/page/user/syncLj", json=item_data,
                                            timeout=5)
-                    print(my_res)
             return {"status": True}
 
     def start(self):
