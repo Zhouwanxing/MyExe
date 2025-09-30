@@ -94,7 +94,7 @@ class MyApp:
 
         # 服务与任务
         self.server = FastAPIServer(port=Config.get("server.port"), gui_logger=self.print_to_gui)
-        self.scheduler = SimpleScheduler(interval=5, gui_logger=self.print_to_gui)
+        self.scheduler = SimpleScheduler(interval=60 * 60, gui_logger=self.print_to_gui)
 
         # 按钮
         frame = tk.Frame(root)
