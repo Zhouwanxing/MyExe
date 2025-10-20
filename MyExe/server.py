@@ -3,6 +3,8 @@ import uvicorn
 from fastapi import FastAPI
 from typing import Optional
 import requests
+import uuid
+
 from bs4 import BeautifulSoup
 
 try:
@@ -58,7 +60,7 @@ class FastAPIServer:
             return {"item_id": item_id}
 
         @self.app.post("/page/user/mz")
-        async def mz(data: Optional[dict] = None):
+        def mz(data: Optional[dict] = None):
             res_data = data.get("data", {})
             url = res_data.get("url")
             if not url:
@@ -67,9 +69,12 @@ class FastAPIServer:
             if not ("lianjia.com" in url and "ershoufang" in url):
                 return {"msg": "skip url"}
 
-            print(f"URL: {url}")
+            random_uuid = uuid.uuid4()
+            # if self.gui_logger:
+            #     self.gui_logger(f"URL: {url}")
             cookie = res_data.get("cookie", "")
-            print(f"Cookie: {cookie}")
+            # if self.gui_logger:
+            #     self.gui_logger(f"Cookie: {cookie}")
 
             headers = {"Cookie": cookie,
                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"}
@@ -80,14 +85,16 @@ class FastAPIServer:
                 return {"status": False}
             lis = ul.find_all("li")
             if self.gui_logger:
-                self.gui_logger(len(lis))
+                self.gui_logger(f"{random_uuid}={len(lis)}")
             for li in lis:
                 item_data = handle_lj(li)
                 if item_data:
-                    if self.gui_logger:
-                        self.gui_logger(item_data)
+                    # if self.gui_logger:
+                    #     self.gui_logger(item_data)
                     requests.post(Config.get("server.baseUrl") + "/page/user/syncLj", json=item_data,
                                            timeout=5)
+            if self.gui_logger:
+                self.gui_logger(f"{random_uuid}=end...")
             return {"status": True}
 
     def start(self):
