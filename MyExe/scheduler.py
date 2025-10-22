@@ -14,24 +14,42 @@ def openPage():
     scroll_height2 = 760
     click_page_y = 260
 
-    subprocess.Popen([Config.get("server.chromePath"), Config.get("server.clickUrl")])
-    time.sleep(10)
-    subprocess.Popen([Config.get("server.chromePath"), Config.get("server.clickUrl")])
-    time.sleep(10)
-    pyautogui.click(570, 678)
-    time.sleep(1)
-    pyautogui.click(560, 783)
-    for i in range(6):
-        time.sleep(10)
-        pyautogui.scroll(scroll_height)
-        time.sleep(2)
-        pyautogui.scroll(scroll_height2)
-        time.sleep(1)
-        pyautogui.scroll(scroll_height)
-        time.sleep(2)
-        pyautogui.scroll(scroll_height2)
-        time.sleep(1)
-        pyautogui.click(1165 + i * 45, click_page_y)
+    # subprocess.Popen([Config.get("server.chromePath"), Config.get("server.clickUrl")])
+    # time.sleep(10)
+    # subprocess.Popen([Config.get("server.chromePath"), Config.get("server.clickUrl")])
+    # time.sleep(10)
+    # pyautogui.click(570, 678)
+    # time.sleep(1)
+    # pyautogui.click(560, 783)
+    # for i in range(6):
+    #     time.sleep(10)
+    #     pyautogui.scroll(scroll_height)
+    #     time.sleep(2)
+    #     pyautogui.scroll(scroll_height2)
+    #     time.sleep(1)
+    #     pyautogui.scroll(scroll_height)
+    #     time.sleep(2)
+    #     pyautogui.scroll(scroll_height2)
+    #     time.sleep(1)
+    #     pyautogui.click(1165 + i * 45, click_page_y)
+    params = "?sug=%E4%B8%87%E7%A7%91%E6%B1%89%E5%8F%A3%E4%BC%A0%E5%A5%87%E5%94%90%E6%A8%BE"
+    subprocess.Popen(
+        [Config.get("server.chromePath"), f'{Config.get("server.clickUrl")}ershoufang/c376945018753367/{params}'])
+    time.sleep(2)
+    subprocess.Popen(
+        [Config.get("server.chromePath"), f'{Config.get("server.clickUrl")}ershoufang/pg2c376945018753367/{params}'])
+    time.sleep(2)
+    subprocess.Popen(
+        [Config.get("server.chromePath"), f'{Config.get("server.clickUrl")}ershoufang/pg3c376945018753367/{params}'])
+    time.sleep(2)
+    subprocess.Popen(
+        [Config.get("server.chromePath"), f'{Config.get("server.clickUrl")}ershoufang/pg4c376945018753367/{params}'])
+    time.sleep(2)
+    subprocess.Popen(
+        [Config.get("server.chromePath"), f'{Config.get("server.clickUrl")}ershoufang/pg5c376945018753367/{params}'])
+    time.sleep(2)
+    subprocess.Popen(
+        [Config.get("server.chromePath"), f'{Config.get("server.clickUrl")}ershoufang/pg6c376945018753367/{params}'])
 
 
 class SimpleScheduler:
