@@ -63,6 +63,8 @@ class FastAPIServer:
         def mz(data: Optional[dict] = None):
             res_data = data.get("data", {})
             url = res_data.get("url")
+            if self.gui_logger:
+                self.gui_logger(f"{url}")
             if not url:
                 return {"msg": "missing url"}
 
