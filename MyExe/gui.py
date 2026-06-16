@@ -193,8 +193,14 @@ class MyApp:
 
         self.server = FastAPIServer(port=Config.get("server.port"), gui_logger=self.print_to_gui)
         self.proxy = ProxyServer(gui_logger=self.print_to_gui)
-        self.scheduler = SimpleScheduler(interval=60 * 60, gui_logger=self.print_to_gui)
+        self.scheduler = SimpleScheduler(gui_logger=self.print_to_gui, on_pause=self._on_scheduler_paused)
         self._proxy_dialog = None
+        self._icon_flash_job = None
+        self._icon_flash_step = 0
+        self._tray_icon_normal = None
+        self._tray_icon_alert = None
+        self._tray_icon_flash = None
+        self._window_title_normal = "MyExe 控制台"
 
         self._update_port_label()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -263,6 +269,7 @@ class MyApp:
             font=_font(14), padx=8, pady=4,
         )
         emblem.pack(side=tk.LEFT, padx=(0, 12))
+        self.header_emblem = emblem
 
         title_block = tk.Frame(title_row, bg=COLORS["surface"])
         title_block.pack(side=tk.LEFT)
@@ -517,22 +524,30 @@ class MyApp:
     # ── 日志输出 ──────────────────────────────────────────
 
     def print_to_gui(self, msg, tag="info"):
-        if tag not in ("timestamp", "info", "warn", "error"):
+        if tag not in ("timestamp", "info", "warn", "error", "success"):
             lower = str(msg).lower()
             if "警告" in str(msg) or "warn" in lower:
                 tag = "warn"
             elif "失败" in str(msg) or "错误" in str(msg) or "error" in lower:
                 tag = "error"
+            elif "完成" in str(msg) or "success" in lower:
+                tag = "success"
             else:
                 tag = "info"
 
-        ts = current_datetime_str()
-        self.log_text.configure(state="normal")
-        self.log_text.insert(tk.END, f"[{ts}] ", "timestamp")
-        self.log_text.insert(tk.END, f"{msg}\n", tag)
-        self.log_text.see(tk.END)
-        self.log_text.configure(state="disabled")
-        self.footer_label.configure(text=str(msg)[:80])
+        def _append():
+            ts = current_datetime_str()
+            self.log_text.configure(state="normal")
+            self.log_text.insert(tk.END, f"[{ts}] ", "timestamp")
+            self.log_text.insert(tk.END, f"{msg}\n", tag)
+            self.log_text.see(tk.END)
+            self.log_text.configure(state="disabled")
+            self.footer_label.configure(text=str(msg)[:80])
+
+        if threading.current_thread() is threading.main_thread():
+            _append()
+        else:
+            self.root.after(0, _append)
 
     # ── 服务控制 ──────────────────────────────────────────
 
@@ -550,20 +565,126 @@ class MyApp:
             self.server.start()
             self.server_btn.configure(text="⏸  暂停 HTTP 服务")
             self._set_status(self.server_status_frame, True, "运行中", "已停止")
+            self.print_to_gui("[Server] HTTP 服务已启动")
+            if not self.scheduler.running:
+                self.scheduler.start()
+                self._update_scheduler_ui()
 
     def _on_server_stopped(self):
         self.server_btn.configure(state="normal", text="▶  启动 HTTP 服务")
         self._set_status(self.server_status_frame, False, "运行中", "已停止")
 
+    def _update_scheduler_ui(self):
+        if self.scheduler.running and self.scheduler.paused:
+            self.scheduler_btn.configure(text="▶  恢复执行", variant="success")
+            self._set_scheduler_status_paused()
+        elif self.scheduler.running:
+            self.scheduler_btn.configure(text="⏸  暂停定时任务", variant="primary")
+            self._set_status(self.scheduler_status_frame, True, "运行中", "已停止")
+        else:
+            self.scheduler_btn.configure(text="▶  启动定时任务", variant="primary")
+            self._set_status(self.scheduler_status_frame, False, "运行中", "已停止")
+
+    def _set_scheduler_status_paused(self):
+        color = COLORS["warning"]
+        card = self.scheduler_status_frame
+        card.dot.configure(fg=color)
+        card.accent.configure(bg=color)
+        card.value_label.configure(text="已暂停", fg=color)
+
+    def _on_scheduler_paused(self, reason):
+        self.root.after(0, lambda: self._handle_scheduler_paused(reason))
+
+    def _handle_scheduler_paused(self, reason):
+        self._update_scheduler_ui()
+        self.print_to_gui(f"定时任务已暂停，请点击「恢复执行」从头开始 — {reason}", tag="warn")
+        self._start_icon_flash()
+
+    def _create_tray_flash_icons(self, image):
+        size = 32
+        normal = image.copy()
+        if normal.mode != "RGBA":
+            normal = normal.convert("RGBA")
+        normal = normal.resize((size, size), Image.Resampling.LANCZOS)
+
+        alert = normal.copy()
+        red_layer = Image.new("RGBA", alert.size, (255, 40, 40, 200))
+        alert = Image.alpha_composite(alert, red_layer)
+
+        flash = Image.new("RGBA", (size, size), (255, 30, 30, 255))
+        draw_font = None
+        try:
+            from PIL import ImageDraw, ImageFont
+            draw = ImageDraw.Draw(flash)
+            try:
+                draw_font = ImageFont.truetype("arial.ttf", 22)
+            except OSError:
+                draw_font = ImageFont.load_default()
+            draw.text((size // 2, size // 2), "!", fill="white", font=draw_font, anchor="mm")
+        except Exception:
+            pass
+
+        return normal, alert, flash
+
+    def _start_icon_flash(self):
+        if self._icon_flash_job is not None:
+            return
+        self._icon_flash_step = 0
+        self._tick_icon_flash()
+
+    def _stop_icon_flash(self):
+        if self._icon_flash_job is not None:
+            self.root.after_cancel(self._icon_flash_job)
+            self._icon_flash_job = None
+        self._icon_flash_step = 0
+        self.root.title(self._window_title_normal)
+        if hasattr(self, "header_emblem"):
+            self.header_emblem.configure(
+                text="⚡", bg=COLORS["accent_light"], fg=COLORS["accent"],
+            )
+        if self.tray_icon and self._tray_icon_normal:
+            self.tray_icon.icon = self._tray_icon_normal
+            self.tray_icon.title = self._window_title_normal
+
+    def _tick_icon_flash(self):
+        if not self.scheduler.paused:
+            self._stop_icon_flash()
+            return
+
+        icons = [self._tray_icon_normal, self._tray_icon_alert, self._tray_icon_flash]
+        icons = [icon for icon in icons if icon is not None]
+        if self.tray_icon and icons:
+            self.tray_icon.icon = icons[self._icon_flash_step % len(icons)]
+            self.tray_icon.title = "⚠ MyExe — 定时任务已暂停！"
+
+        if self._icon_flash_step % 2 == 0:
+            self.root.title(f"⚠ {self._window_title_normal} — 任务已暂停")
+            if hasattr(self, "header_emblem"):
+                self.header_emblem.configure(
+                    text="⚠", bg=COLORS["danger_light"], fg=COLORS["danger"],
+                )
+        else:
+            self.root.title(self._window_title_normal)
+            if hasattr(self, "header_emblem"):
+                self.header_emblem.configure(
+                    text="⚡", bg=COLORS["warning"], fg="#ffffff",
+                )
+
+        self._icon_flash_step += 1
+        self._icon_flash_job = self.root.after(350, self._tick_icon_flash)
+
     def toggle_scheduler(self):
+        if self.scheduler.running and self.scheduler.paused:
+            if self.scheduler.resume():
+                self._stop_icon_flash()
+                self._update_scheduler_ui()
+            return
         if self.scheduler.running:
             self.scheduler.stop()
-            self.scheduler_btn.configure(text="▶  启动定时任务")
-            self._set_status(self.scheduler_status_frame, False, "运行中", "已停止")
+            self._stop_icon_flash()
         else:
             self.scheduler.start()
-            self.scheduler_btn.configure(text="⏸  暂停定时任务")
-            self._set_status(self.scheduler_status_frame, True, "运行中", "已停止")
+        self._update_scheduler_ui()
 
     # ── 端口转发 ──────────────────────────────────────────
 
@@ -742,7 +863,10 @@ class MyApp:
             )
 
             self.tray_image = image
-            self.tray_icon = pystray.Icon("MyExe", self.tray_image, "MyExe 控制台", menu)
+            self._tray_icon_normal, self._tray_icon_alert, self._tray_icon_flash = (
+                self._create_tray_flash_icons(image)
+            )
+            self.tray_icon = pystray.Icon("MyExe", self._tray_icon_normal, self._window_title_normal, menu)
             self.tray_thread = threading.Thread(target=self.run_tray, daemon=True)
             self.tray_thread.start()
         except Exception as e:
@@ -789,6 +913,7 @@ class MyApp:
         self.exit_app()
 
     def exit_app(self):
+        self._stop_icon_flash()
         if self.server.running:
             self.server.stop()
         if self.proxy.running:
