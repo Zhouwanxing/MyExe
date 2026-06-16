@@ -1,5 +1,6 @@
 import threading
-import uvicorn
+import time
+from uvicorn import Config as UvicornConfig, Server
 from fastapi import FastAPI
 from typing import Optional
 import requests
@@ -45,6 +46,8 @@ class FastAPIServer:
         self.port = port
         self.running = False
         self.thread = None
+        self.uvicorn_server = None
+        self._stop_requested = False
         self.app = FastAPI()
         self.gui_logger = gui_logger
 
@@ -100,8 +103,12 @@ class FastAPIServer:
             return {"status": True}
 
     def start(self):
-        if self.running:
+        if self.thread and self.thread.is_alive():
+            if self.gui_logger:
+                self.gui_logger("[Server] 服务已在运行或正在停止中")
             return
+
+        self._stop_requested = False
         self.running = True
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
@@ -109,9 +116,43 @@ class FastAPIServer:
             self.gui_logger(f"[Server] FastAPI started on {self.host}:{self.port}")
 
     def _run(self):
-        uvicorn.run(self.app, host=self.host, port=self.port, log_level="info")
+        if self._stop_requested:
+            self.running = False
+            return
 
-    def stop(self):
+        config = UvicornConfig(self.app, host=self.host, port=self.port, log_level="info")
+        server = Server(config)
+        self.uvicorn_server = server
+        try:
+            server.run()
+        finally:
+            self.uvicorn_server = None
+            self.running = False
+
+    def stop(self, timeout=10):
+        if not self.running and (self.thread is None or not self.thread.is_alive()):
+            return
+
+        self._stop_requested = True
+        if self.gui_logger:
+            self.gui_logger("[Server] 正在停止 FastAPI...")
+
+        # 等待 uvicorn Server 实例创建（启动瞬间点停止的情况）
+        deadline = time.time() + 5
+        while self.uvicorn_server is None and time.time() < deadline:
+            if self.thread is None or not self.thread.is_alive():
+                break
+            time.sleep(0.05)
+
+        if self.uvicorn_server is not None:
+            self.uvicorn_server.should_exit = True
+
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=timeout)
+
         self.running = False
         if self.gui_logger:
-            self.gui_logger("[Server] FastAPI stopped (请重启应用以释放端口)")
+            if self.thread and self.thread.is_alive():
+                self.gui_logger("[Server] FastAPI 停止超时，请稍后再试", tag="warn")
+            else:
+                self.gui_logger("[Server] FastAPI 已停止，端口已释放")
