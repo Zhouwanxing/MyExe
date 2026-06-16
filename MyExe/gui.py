@@ -22,30 +22,53 @@ except ImportError:
     from MyExe.utils.config_loader import Config
 
 
+FONT_FAMILY = "Microsoft YaHei UI" if sys.platform == "win32" else "Segoe UI"
+
+
+def _font(size=10, weight="normal"):
+    if weight == "bold":
+        return (FONT_FAMILY, size, "bold")
+    return (FONT_FAMILY, size)
+
+
 # ── 浅色配色 ──────────────────────────────────────────────
 COLORS = {
-    "bg":           "#f0f2f5",
-    "surface":      "#ffffff",
-    "surface_alt":  "#ffffff",
-    "border":       "#e2e6ed",
-    "accent":       "#4f86f7",
-    "accent_hover": "#3b72e8",
-    "accent_light": "#e8f0fe",
-    "success":      "#34a853",
-    "success_light":"#e6f4ea",
-    "warning":      "#e37400",
-    "danger":       "#d93025",
-    "danger_light": "#fce8e6",
-    "text":         "#1f2937",
-    "text_dim":     "#6b7280",
-    "log_bg":       "#fafbfc",
-    "log_fg":       "#374151",
-    "btn_bg":       "#ffffff",
-    "btn_hover":    "#eef1f6",
-    "btn_active":   "#e2e7ef",
-    "btn_border":   "#d8dce3",
-    "btn_disabled": "#f3f4f6",
+    "bg":            "#e8ecf2",
+    "surface":       "#ffffff",
+    "surface_alt":   "#f7f9fc",
+    "border":        "#dde3ec",
+    "border_light":  "#eef2f7",
+    "accent":        "#3b6cf4",
+    "accent_hover":  "#2f5ad8",
+    "accent_light":  "#e8efff",
+    "success":       "#1e9e55",
+    "success_light": "#e3f5eb",
+    "warning":       "#d97706",
+    "danger":        "#dc2626",
+    "danger_light":  "#feecec",
+    "text":          "#111827",
+    "text_dim":      "#64748b",
+    "log_bg":        "#f8fafc",
+    "log_fg":        "#334155",
+    "btn_bg":        "#ffffff",
+    "btn_hover":     "#eef2f7",
+    "btn_active":    "#e2e8f0",
+    "btn_border":    "#cbd5e1",
+    "btn_disabled":  "#f1f5f9",
 }
+
+
+def _panel(parent, bg=None):
+    """带细边框的白色面板容器。"""
+    wrap = tk.Frame(parent, bg=COLORS["bg"])
+    panel = tk.Frame(
+        wrap, bg=bg or COLORS["surface"],
+        highlightbackground=COLORS["border"],
+        highlightthickness=1,
+    )
+    panel.pack(fill=tk.BOTH, expand=True)
+    wrap.panel = panel
+    return wrap
 
 
 class RoundedButton(tk.Frame):
@@ -54,7 +77,7 @@ class RoundedButton(tk.Frame):
     RADIUS = 10
     PADX = 18
     PADY = 9
-    FONT = ("Segoe UI", 10)
+    FONT = _font(10)
 
     VARIANTS = {
         "primary": ("#e8f0fe", "#d2e3fc", "#1967d2", "#4f86f7"),
@@ -150,8 +173,8 @@ class MyApp:
     def __init__(self, root):
         self.root = root
         self.root.title("MyExe 控制台")
-        self.root.geometry("960x580")
-        self.root.minsize(720, 420)
+        self.root.geometry("1000x640")
+        self.root.minsize(760, 480)
         self.root.configure(bg=COLORS["bg"])
 
         self.tray_icon = None
@@ -183,126 +206,226 @@ class MyApp:
         style = ttk.Style()
         style.theme_use("clam")
 
-        style.configure(".", background=COLORS["bg"], foreground=COLORS["text"],
-                        font=("Segoe UI", 10))
+        style.configure(".", background=COLORS["bg"], foreground=COLORS["text"], font=_font(10))
         style.configure("TFrame", background=COLORS["bg"])
         style.configure("Surface.TFrame", background=COLORS["surface"])
         style.configure("Header.TFrame", background=COLORS["surface"])
 
         style.configure("Title.TLabel",
                         background=COLORS["surface"], foreground=COLORS["text"],
-                        font=("Segoe UI", 16, "bold"))
+                        font=_font(18, "bold"))
         style.configure("Subtitle.TLabel",
                         background=COLORS["surface"], foreground=COLORS["text_dim"],
-                        font=("Segoe UI", 9))
+                        font=_font(9))
         style.configure("Status.TLabel",
                         background=COLORS["surface_alt"], foreground=COLORS["text_dim"],
-                        font=("Segoe UI", 9))
+                        font=_font(9))
         style.configure("StatusValue.TLabel",
                         background=COLORS["surface_alt"], foreground=COLORS["text"],
-                        font=("Segoe UI", 9, "bold"))
+                        font=_font(9, "bold"))
         style.configure("Footer.TLabel",
                         background=COLORS["surface"], foreground=COLORS["text_dim"],
-                        font=("Segoe UI", 8))
+                        font=_font(8))
         style.configure("LogTitle.TLabel",
-                        background=COLORS["bg"], foreground=COLORS["text_dim"],
-                        font=("Segoe UI", 9))
+                        background=COLORS["surface"], foreground=COLORS["text"],
+                        font=_font(10, "bold"))
+        style.configure("LogHint.TLabel",
+                        background=COLORS["surface"], foreground=COLORS["text_dim"],
+                        font=_font(8))
 
-    def _make_btn(self, parent, text, command, variant="ghost"):
-        return RoundedButton(parent, text=text, command=command, variant=variant, bg=COLORS["bg"])
+        RoundedButton.FONT = _font(10)
+
+    def _make_btn(self, parent, text, command, variant="ghost", bg=None):
+        surface = bg
+        if surface is None:
+            try:
+                surface = parent.cget("bg")
+            except tk.TclError:
+                surface = COLORS["bg"]
+        return RoundedButton(parent, text=text, command=command, variant=variant, bg=surface)
 
     # ── 布局构建 ──────────────────────────────────────────
 
     def _build_header(self):
-        header = ttk.Frame(self.root, style="Header.TFrame", padding=(20, 16))
+        tk.Frame(self.root, bg=COLORS["accent"], height=3).pack(fill=tk.X)
+
+        header = tk.Frame(self.root, bg=COLORS["surface"], padx=24, pady=18)
         header.pack(fill=tk.X)
 
-        left = ttk.Frame(header, style="Header.TFrame")
+        left = tk.Frame(header, bg=COLORS["surface"])
         left.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        ttk.Label(left, text="MyExe 控制台", style="Title.TLabel").pack(anchor=tk.W)
-        ttk.Label(left, text="HTTP 服务 · 端口转发 · 定时任务 · 系统托盘", style="Subtitle.TLabel").pack(anchor=tk.W, pady=(2, 0))
+        title_row = tk.Frame(left, bg=COLORS["surface"])
+        title_row.pack(anchor=tk.W)
 
-        self.port_label = ttk.Label(header, text="", style="Subtitle.TLabel")
-        self.port_label.pack(side=tk.RIGHT, anchor=tk.NE)
+        emblem = tk.Label(
+            title_row, text="⚡", bg=COLORS["accent_light"], fg=COLORS["accent"],
+            font=_font(14), padx=8, pady=4,
+        )
+        emblem.pack(side=tk.LEFT, padx=(0, 12))
+
+        title_block = tk.Frame(title_row, bg=COLORS["surface"])
+        title_block.pack(side=tk.LEFT)
+
+        tk.Label(
+            title_block, text="MyExe 控制台", bg=COLORS["surface"], fg=COLORS["text"],
+            font=_font(18, "bold"),
+        ).pack(anchor=tk.W)
+        tk.Label(
+            title_block, text="HTTP 服务 · 端口转发 · 定时任务 · 系统托盘",
+            bg=COLORS["surface"], fg=COLORS["text_dim"], font=_font(9),
+        ).pack(anchor=tk.W, pady=(3, 0))
+
+        self.port_badge = tk.Frame(
+            header, bg=COLORS["accent_light"],
+            highlightbackground=COLORS["accent"], highlightthickness=1,
+            padx=12, pady=6,
+        )
+        self.port_badge.pack(side=tk.RIGHT, anchor=tk.NE)
+
+        self.port_label = tk.Label(
+            self.port_badge, text="", bg=COLORS["accent_light"], fg=COLORS["accent"],
+            font=_font(10, "bold"),
+        )
+        self.port_label.pack()
+
+        tk.Frame(self.root, bg=COLORS["border"], height=1).pack(fill=tk.X)
 
     def _build_status_bar(self):
-        bar = ttk.Frame(self.root, padding=(20, 0, 20, 12))
-        bar.pack(fill=tk.X)
+        bar = tk.Frame(self.root, bg=COLORS["bg"])
+        bar.pack(fill=tk.X, padx=24, pady=(16, 0))
+        for col in range(3):
+            bar.columnconfigure(col, weight=1, uniform="status")
 
         self.server_status_frame = self._status_card(bar, "HTTP 服务", "已停止", COLORS["text_dim"])
-        self.server_status_frame.pack(side=tk.LEFT, padx=(0, 10))
+        self.server_status_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
 
         self.scheduler_status_frame = self._status_card(bar, "定时任务", "已停止", COLORS["text_dim"])
-        self.scheduler_status_frame.pack(side=tk.LEFT, padx=(0, 10))
+        self.scheduler_status_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 8))
 
         self.proxy_status_frame = self._status_card(bar, "端口转发", "未配置", COLORS["text_dim"])
-        self.proxy_status_frame.pack(side=tk.LEFT)
+        self.proxy_status_frame.grid(row=0, column=2, sticky="nsew")
 
-    def _status_card(self, parent, title, value, dot_color):
-        card = tk.Frame(parent, bg=COLORS["surface"], highlightbackground=COLORS["border"],
-                        highlightthickness=1, padx=14, pady=10)
-        inner = tk.Frame(card, bg=COLORS["surface"])
-        inner.pack()
+    def _status_card(self, parent, title, value, accent_color):
+        card = tk.Frame(
+            parent, bg=COLORS["surface"],
+            highlightbackground=COLORS["border"], highlightthickness=1,
+        )
 
-        dot = tk.Label(inner, text="●", bg=COLORS["surface"], fg=dot_color,
-                       font=("Segoe UI", 8))
+        accent = tk.Frame(card, bg=accent_color, width=4)
+        accent.pack(side=tk.LEFT, fill=tk.Y)
+
+        body = tk.Frame(card, bg=COLORS["surface"], padx=16, pady=14)
+        body.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        top = tk.Frame(body, bg=COLORS["surface"])
+        top.pack(fill=tk.X)
+
+        dot = tk.Label(top, text="●", bg=COLORS["surface"], fg=accent_color, font=_font(7))
         dot.pack(side=tk.LEFT, padx=(0, 6))
 
-        text_frame = tk.Frame(inner, bg=COLORS["surface"])
-        text_frame.pack(side=tk.LEFT)
+        tk.Label(
+            top, text=title, bg=COLORS["surface"], fg=COLORS["text_dim"], font=_font(8),
+        ).pack(side=tk.LEFT)
 
-        tk.Label(text_frame, text=title, bg=COLORS["surface"], fg=COLORS["text_dim"],
-                 font=("Segoe UI", 8)).pack(anchor=tk.W)
-        value_label = tk.Label(text_frame, text=value, bg=COLORS["surface"], fg=COLORS["text"],
-                               font=("Segoe UI", 10, "bold"))
-        value_label.pack(anchor=tk.W)
+        value_label = tk.Label(
+            body, text=value, bg=COLORS["surface"], fg=COLORS["text"],
+            font=_font(11, "bold"), anchor=tk.W,
+        )
+        value_label.pack(anchor=tk.W, pady=(6, 0))
 
+        card.accent = accent
         card.dot = dot
         card.value_label = value_label
         return card
 
     def _set_status(self, card, running, running_text, stopped_text):
         if running_text == "停止中":
-            card.dot.configure(fg=COLORS["warning"])
-            card.value_label.configure(text=running_text, fg=COLORS["warning"])
+            color = COLORS["warning"]
+            card.dot.configure(fg=color)
+            card.accent.configure(bg=color)
+            card.value_label.configure(text=running_text, fg=color)
         elif running:
-            card.dot.configure(fg=COLORS["success"])
-            card.value_label.configure(text=running_text, fg=COLORS["success"])
+            color = COLORS["success"]
+            card.dot.configure(fg=color)
+            card.accent.configure(bg=color)
+            card.value_label.configure(text=running_text, fg=color)
         else:
-            card.dot.configure(fg=COLORS["text_dim"])
+            color = COLORS["text_dim"]
+            card.dot.configure(fg=color)
+            card.accent.configure(bg=color)
             card.value_label.configure(text=stopped_text, fg=COLORS["text_dim"])
 
     def _build_toolbar(self):
-        toolbar = tk.Frame(self.root, bg=COLORS["bg"], padx=20, pady=0)
-        toolbar.pack(fill=tk.X, pady=(0, 12))
+        wrap = _panel(self.root)
+        wrap.pack(fill=tk.X, padx=24, pady=(14, 0))
 
-        self.server_btn = self._make_btn(toolbar, "▶  启动 HTTP 服务", self.toggle_server, "success")
+        toolbar = tk.Frame(wrap.panel, bg=COLORS["surface"], padx=16, pady=14)
+        toolbar.pack(fill=tk.X)
+
+        left = tk.Frame(toolbar, bg=COLORS["surface"])
+        left.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        tk.Label(
+            left, text="快捷操作", bg=COLORS["surface"], fg=COLORS["text_dim"], font=_font(8),
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        btn_row = tk.Frame(left, bg=COLORS["surface"])
+        btn_row.pack(anchor=tk.W)
+
+        self.server_btn = self._make_btn(btn_row, "▶  启动 HTTP 服务", self.toggle_server, "success")
         self.server_btn.pack(side=tk.LEFT, padx=(0, 8))
 
-        self.scheduler_btn = self._make_btn(toolbar, "▶  启动定时任务", self.toggle_scheduler, "primary")
+        self.scheduler_btn = self._make_btn(btn_row, "▶  启动定时任务", self.toggle_scheduler, "primary")
         self.scheduler_btn.pack(side=tk.LEFT, padx=(0, 8))
 
-        self.proxy_btn = self._make_btn(toolbar, "⇄  端口转发", self.open_proxy_dialog, "primary")
+        self.proxy_btn = self._make_btn(btn_row, "⇄  端口转发", self.open_proxy_dialog, "primary")
         self.proxy_btn.pack(side=tk.LEFT, padx=(0, 8))
 
-        self.minimize_btn = self._make_btn(toolbar, "⬇  最小化到托盘", self.minimize_to_tray, "ghost")
+        right = tk.Frame(toolbar, bg=COLORS["surface"])
+        right.pack(side=tk.RIGHT)
+
+        tk.Label(
+            right, text="窗口", bg=COLORS["surface"], fg=COLORS["text_dim"], font=_font(8),
+        ).pack(anchor=tk.E, pady=(0, 8))
+
+        win_row = tk.Frame(right, bg=COLORS["surface"])
+        win_row.pack(anchor=tk.E)
+
+        self.minimize_btn = self._make_btn(win_row, "⬇  最小化到托盘", self.minimize_to_tray, "ghost")
         self.minimize_btn.pack(side=tk.LEFT, padx=(0, 8))
 
-        self.exit_btn = self._make_btn(toolbar, "✕  退出", self.exit_app, "danger")
-        self.exit_btn.pack(side=tk.RIGHT)
+        self.exit_btn = self._make_btn(win_row, "✕  退出", self.exit_app, "danger")
+        self.exit_btn.pack(side=tk.LEFT)
 
     def _build_log_area(self):
-        wrapper = ttk.Frame(self.root, padding=(20, 0, 20, 8))
-        wrapper.pack(fill=tk.BOTH, expand=True)
+        wrap = _panel(self.root)
+        wrap.pack(fill=tk.BOTH, expand=True, padx=24, pady=(14, 12))
 
-        ttk.Label(wrapper, text="运行日志", style="LogTitle.TLabel").pack(anchor=tk.W, pady=(0, 6))
+        panel = wrap.panel
 
-        log_frame = tk.Frame(wrapper, bg=COLORS["border"], padx=1, pady=1)
-        log_frame.pack(fill=tk.BOTH, expand=True)
+        log_header = tk.Frame(panel, bg=COLORS["surface"], padx=16)
+        log_header.pack(fill=tk.X, pady=(12, 8))
+
+        tk.Label(
+            log_header, text="运行日志", bg=COLORS["surface"], fg=COLORS["text"], font=_font(10, "bold"),
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            log_header, text="实时输出服务与任务状态",
+            bg=COLORS["surface"], fg=COLORS["text_dim"], font=_font(8),
+        ).pack(side=tk.LEFT, padx=(10, 0))
+
+        self.clear_log_btn = self._make_btn(log_header, "清空", self._clear_log, "ghost")
+        self.clear_log_btn.pack(side=tk.RIGHT)
+
+        tk.Frame(panel, bg=COLORS["border_light"], height=1).pack(fill=tk.X)
+
+        log_body = tk.Frame(panel, bg=COLORS["log_bg"], padx=1, pady=1)
+        log_body.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
 
         self.log_text = ScrolledText(
-            log_frame,
+            log_body,
             state="disabled",
             wrap=tk.WORD,
             bg=COLORS["log_bg"],
@@ -310,10 +433,10 @@ class MyApp:
             insertbackground=COLORS["text"],
             selectbackground=COLORS["accent_light"],
             selectforeground=COLORS["text"],
-            font=("Consolas", 10),
+            font=("Cascadia Mono", 10) if sys.platform == "win32" else ("Consolas", 10),
             relief=tk.FLAT,
-            padx=12,
-            pady=10,
+            padx=14,
+            pady=12,
             borderwidth=0,
             highlightthickness=0,
         )
@@ -323,19 +446,36 @@ class MyApp:
         self.log_text.tag_configure("info", foreground=COLORS["log_fg"])
         self.log_text.tag_configure("warn", foreground=COLORS["warning"])
         self.log_text.tag_configure("error", foreground=COLORS["danger"])
+        self.log_text.tag_configure("success", foreground=COLORS["success"])
+
+    def _clear_log(self):
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", tk.END)
+        self.log_text.configure(state="disabled")
+        self.footer_label.configure(text="日志已清空")
 
     def _build_footer(self):
-        footer = ttk.Frame(self.root, style="Header.TFrame", padding=(20, 8))
+        tk.Frame(self.root, bg=COLORS["border"], height=1).pack(fill=tk.X, side=tk.BOTTOM)
+
+        footer = tk.Frame(self.root, bg=COLORS["surface"], padx=24, pady=10)
         footer.pack(fill=tk.X, side=tk.BOTTOM)
 
-        self.footer_label = ttk.Label(footer, text="就绪", style="Footer.TLabel")
+        status_dot = tk.Label(footer, text="●", bg=COLORS["surface"], fg=COLORS["success"], font=_font(7))
+        status_dot.pack(side=tk.LEFT, padx=(0, 6))
+
+        self.footer_label = tk.Label(
+            footer, text="就绪", bg=COLORS["surface"], fg=COLORS["text_dim"], font=_font(8),
+        )
         self.footer_label.pack(side=tk.LEFT)
 
-        ttk.Label(footer, text="关闭窗口将最小化到系统托盘", style="Footer.TLabel").pack(side=tk.RIGHT)
+        tk.Label(
+            footer, text="关闭窗口将最小化到系统托盘",
+            bg=COLORS["surface"], fg=COLORS["text_dim"], font=_font(8),
+        ).pack(side=tk.RIGHT)
 
     def _update_port_label(self):
         port = Config.get("server.port")
-        self.port_label.configure(text=f"端口 {port}")
+        self.port_label.configure(text=f"监听端口  {port}")
 
     # ── 资源与图标 ────────────────────────────────────────
 

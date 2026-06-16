@@ -10,42 +10,56 @@ import sys
 from PIL import Image
 
 
-def convert_png_to_ico(png_path, ico_path=None, sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]):
+def convert_png_to_ico(
+    png_path,
+    ico_path=None,
+    sizes=None,
+):
     """
     将 PNG 图片转换为 ICO 格式
-    
+
     Args:
         png_path: PNG 文件路径
         ico_path: 输出 ICO 文件路径，如果为 None 则自动生成
-        sizes: 图标尺寸列表
+        sizes: 图标尺寸列表；默认包含 Windows 桌面/任务栏常用尺寸
     """
+    if sizes is None:
+        sizes = [16, 24, 32, 48, 64, 128, 256]
+
     try:
         if not os.path.exists(png_path):
             print(f"错误: PNG 文件不存在: {png_path}")
             return False
-        
+
         if ico_path is None:
-            # 自动生成 ICO 文件路径
             base_name = os.path.splitext(png_path)[0]
             ico_path = f"{base_name}.ico"
-        
-        # 打开原始图片
-        with Image.open(png_path) as img:
-            # 确保图片有透明通道
-            if img.mode != 'RGBA':
-                img = img.convert('RGBA')
-            
-            # 创建不同尺寸的图标
-            icon_images = []
-            for size in sizes:
-                resized = img.resize(size, Image.Resampling.LANCZOS)
-                icon_images.append(resized)
-            
-            # 保存为 ICO 格式（关键修复：使用各缩放图像的实际尺寸，而不是原图尺寸）
-            requested_sizes = [im.size for im in icon_images]
-            icon_images[0].save(ico_path, format='ICO', sizes=requested_sizes)
+
+        with Image.open(png_path) as src:
+            if src.mode != "RGBA":
+                src = src.convert("RGBA")
+
+            # 不放大源图；ICO 最大 256，各尺寸直接从原图缩放（避免二次模糊）
+            native_max = min(max(src.size), 256)
+            valid_sizes = sorted({s for s in sizes if s <= native_max})
+            if native_max not in valid_sizes:
+                valid_sizes.append(native_max)
+                valid_sizes.sort()
+
+            frames = [src.resize((s, s), Image.Resampling.LANCZOS) for s in valid_sizes]
+
+            # Pillow 要求 im 为最大尺寸，其余放入 append_images
+            frames[-1].save(
+                ico_path,
+                format="ICO",
+                sizes=[(s, s) for s in valid_sizes],
+                append_images=frames[:-1],
+                bitmap_format="bmp",
+            )
             print(f"成功转换: {png_path} -> {ico_path}")
-            print(f"图标尺寸: {requested_sizes}")
+            print(f"嵌入尺寸: {[(s, s) for s in valid_sizes]}")
+            if native_max < 256:
+                print(f"提示: 源图 {max(src.size)}px，未生成 256x256；如需超清桌面图标请使用 ≥256px 的 PNG")
             return True
             
     except Exception as e:

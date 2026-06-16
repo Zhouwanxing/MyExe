@@ -67,6 +67,17 @@ if errorlevel 1 (
 )
 cd ..
 
+:: 从 PNG 重新生成多尺寸 ICO（桌面快捷方式需要 256x256 才清晰）
+if exist "jerry.png" (
+    echo 正在生成高清图标 jerry.ico ...
+    "%PYTHON_EXE%" -c "from create_icon import convert_png_to_ico; import sys; sys.exit(0 if convert_png_to_ico('jerry.png', 'jerry.ico') else 1)"
+    if errorlevel 1 (
+        echo 警告: 图标生成失败，将使用现有 jerry.ico
+    )
+) else (
+    echo 警告: 未找到 jerry.png，跳过图标生成
+)
+
 :: 清理之前的构建文件
 echo 正在清理之前的构建文件...
 if exist "build" rmdir /s /q "build"
