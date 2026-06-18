@@ -6,18 +6,28 @@ from PIL import Image
 import threading
 import sys
 import os
+import time
+import uuid
 
 # 尝试不同的导入方式以兼容 PyInstaller 打包
 try:
     from server import FastAPIServer
     from proxy_server import ProxyServer
     from scheduler import SimpleScheduler
+    from macro_engine import MacroRecorder, MacroPlayer, open_browser
+    from macro_storage import list_macros, save_macro, delete_macro, load_macro
+    from macro_api import MacroApiError
+    from macro_scheduler import MacroScheduler
     from utils.time_utils import current_datetime_str
     from utils.config_loader import Config
 except ImportError:
     from MyExe.server import FastAPIServer
     from MyExe.proxy_server import ProxyServer
     from MyExe.scheduler import SimpleScheduler
+    from MyExe.macro_engine import MacroRecorder, MacroPlayer, open_browser
+    from MyExe.macro_storage import list_macros, save_macro, delete_macro, load_macro
+    from MyExe.macro_api import MacroApiError
+    from MyExe.macro_scheduler import MacroScheduler
     from MyExe.utils.time_utils import current_datetime_str
     from MyExe.utils.config_loader import Config
 
@@ -86,13 +96,26 @@ class RoundedButton(tk.Frame):
         "danger":  ("#fce8e6", "#f5c6c2", "#c5221f", "#f5a8a2"),
     }
 
-    def __init__(self, parent, text="", command=None, variant="ghost", bg=None, **kwargs):
+    def __init__(self, parent, text="", command=None, variant="ghost", bg=None, compact=False, **kwargs):
         super().__init__(parent, bg=bg or COLORS["bg"])
         self._text = text
         self._command = command
         self._variant = variant
         self._state = "normal"
         self._hover = False
+        self._compact = compact
+        if compact:
+            self._radius = 6
+            self._padx = 10
+            self._pady = 4
+            self._btn_font = _font(9)
+            self._min_w, self._min_h = 52, 28
+        else:
+            self._radius = self.RADIUS
+            self._padx = self.PADX
+            self._pady = self.PADY
+            self._btn_font = self.FONT
+            self._min_w, self._min_h = 80, 36
 
         self.canvas = tk.Canvas(
             self, highlightthickness=0, borderwidth=0,
@@ -111,10 +134,10 @@ class RoundedButton(tk.Frame):
         return bg, hover, fg, border
 
     def _measure(self):
-        f = tkfont.Font(font=self.FONT)
-        w = f.measure(self._text) + self.PADX * 2
-        h = f.metrics("linespace") + self.PADY * 2
-        return max(w, 80), max(h, 36)
+        f = tkfont.Font(font=self._btn_font)
+        w = f.measure(self._text) + self._padx * 2
+        h = f.metrics("linespace") + self._pady * 2
+        return max(w, self._min_w), max(h, self._min_h)
 
     def _round_rect(self, x1, y1, x2, y2, r, fill, outline):
         points = [
@@ -129,8 +152,8 @@ class RoundedButton(tk.Frame):
         w, h = self._measure()
         self.canvas.configure(width=w, height=h)
         bg, _, fg, border = self._colors()
-        self._round_rect(1, 1, w - 1, h - 1, self.RADIUS, bg, border)
-        self.canvas.create_text(w // 2, h // 2, text=self._text, fill=fg, font=self.FONT)
+        self._round_rect(1, 1, w - 1, h - 1, self._radius, bg, border)
+        self.canvas.create_text(w // 2, h // 2, text=self._text, fill=fg, font=self._btn_font)
 
     def _bind_events(self):
         for seq, fn in [
@@ -176,15 +199,16 @@ class MyApp:
         self.root.geometry("1000x640")
         self.root.minsize(760, 480)
         self.root.configure(bg=COLORS["bg"])
+        self._default_width = 1000
+        self._default_height = 640
 
         self.tray_icon = None
         self.tray_thread = None
         self.is_minimized = False
 
         self._setup_styles()
-        self._build_header()
+        self._build_title_bar()
         self._build_status_bar()
-        self._build_toolbar()
         self._build_log_area()
         self._build_footer()
 
@@ -194,7 +218,13 @@ class MyApp:
         self.server = FastAPIServer(port=Config.get("server.port"), gui_logger=self.print_to_gui)
         self.proxy = ProxyServer(gui_logger=self.print_to_gui)
         self.scheduler = SimpleScheduler(gui_logger=self.print_to_gui, on_pause=self._on_scheduler_paused)
+        self.macro_recorder = MacroRecorder(logger=self.print_to_gui)
+        self.macro_player = MacroPlayer(logger=self.print_to_gui)
+        self.macro_scheduler = MacroScheduler(gui_logger=self.print_to_gui)
+        self.macro_scheduler.start()
         self._proxy_dialog = None
+        self._macro_dialog = None
+        self._recording = False
         self._icon_flash_job = None
         self._icon_flash_step = 0
         self._tray_icon_normal = None
@@ -204,7 +234,9 @@ class MyApp:
 
         self._update_port_label()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.root.bind("<Unmap>", self._on_root_unmap)
         self.setup_system_tray()
+        self._center_window(self._default_width, self._default_height)
 
     # ── 样式 ──────────────────────────────────────────────
 
@@ -241,60 +273,63 @@ class MyApp:
 
         RoundedButton.FONT = _font(10)
 
-    def _make_btn(self, parent, text, command, variant="ghost", bg=None):
+    def _make_btn(self, parent, text, command, variant="ghost", bg=None, compact=False):
         surface = bg
         if surface is None:
             try:
                 surface = parent.cget("bg")
             except tk.TclError:
                 surface = COLORS["bg"]
-        return RoundedButton(parent, text=text, command=command, variant=variant, bg=surface)
+        return RoundedButton(
+            parent, text=text, command=command, variant=variant, bg=surface, compact=compact,
+        )
 
     # ── 布局构建 ──────────────────────────────────────────
 
-    def _build_header(self):
-        tk.Frame(self.root, bg=COLORS["accent"], height=3).pack(fill=tk.X)
+    def _build_title_bar(self):
+        title_bar = tk.Frame(self.root, bg=COLORS["surface"], padx=6, pady=4)
+        title_bar.pack(fill=tk.X, side=tk.TOP)
+        self._title_bar = title_bar
 
-        header = tk.Frame(self.root, bg=COLORS["surface"], padx=24, pady=18)
-        header.pack(fill=tk.X)
-
-        left = tk.Frame(header, bg=COLORS["surface"])
-        left.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        title_row = tk.Frame(left, bg=COLORS["surface"])
-        title_row.pack(anchor=tk.W)
-
-        emblem = tk.Label(
-            title_row, text="⚡", bg=COLORS["accent_light"], fg=COLORS["accent"],
-            font=_font(14), padx=8, pady=4,
-        )
-        emblem.pack(side=tk.LEFT, padx=(0, 12))
-        self.header_emblem = emblem
-
-        title_block = tk.Frame(title_row, bg=COLORS["surface"])
-        title_block.pack(side=tk.LEFT)
-
-        tk.Label(
-            title_block, text="MyExe 控制台", bg=COLORS["surface"], fg=COLORS["text"],
-            font=_font(18, "bold"),
-        ).pack(anchor=tk.W)
-        tk.Label(
-            title_block, text="HTTP 服务 · 端口转发 · 定时任务 · 系统托盘",
-            bg=COLORS["surface"], fg=COLORS["text_dim"], font=_font(9),
-        ).pack(anchor=tk.W, pady=(3, 0))
+        right = tk.Frame(title_bar, bg=COLORS["surface"])
+        right.pack(side=tk.RIGHT)
 
         self.port_badge = tk.Frame(
-            header, bg=COLORS["accent_light"],
+            right, bg=COLORS["accent_light"],
             highlightbackground=COLORS["accent"], highlightthickness=1,
-            padx=12, pady=6,
+            padx=8, pady=2,
         )
-        self.port_badge.pack(side=tk.RIGHT, anchor=tk.NE)
+        self.port_badge.pack(side=tk.RIGHT, padx=(8, 4))
 
         self.port_label = tk.Label(
             self.port_badge, text="", bg=COLORS["accent_light"], fg=COLORS["accent"],
-            font=_font(10, "bold"),
+            font=_font(9, "bold"),
         )
         self.port_label.pack()
+
+        emblem = tk.Label(
+            title_bar, text="⚡", bg=COLORS["accent_light"], fg=COLORS["accent"],
+            font=_font(11), padx=5, pady=1,
+        )
+        emblem.pack(side=tk.LEFT, padx=(2, 6))
+        self.header_emblem = emblem
+
+        tk.Frame(title_bar, bg=COLORS["border"], width=1).pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8), pady=3)
+
+        btn_row = tk.Frame(title_bar, bg=COLORS["surface"])
+        btn_row.pack(side=tk.LEFT)
+
+        self.server_btn = self._make_btn(btn_row, "▶ HTTP", self.toggle_server, "success", compact=True)
+        self.server_btn.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.scheduler_btn = self._make_btn(btn_row, "▶ 定时", self.toggle_scheduler, "primary", compact=True)
+        self.scheduler_btn.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.proxy_btn = self._make_btn(btn_row, "⇄ 转发", self.open_proxy_dialog, "primary", compact=True)
+        self.proxy_btn.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.macro_btn = self._make_btn(btn_row, "⏺ 录制", self.open_macro_dialog, "primary", compact=True)
+        self.macro_btn.pack(side=tk.LEFT)
 
         tk.Frame(self.root, bg=COLORS["border"], height=1).pack(fill=tk.X)
 
@@ -362,48 +397,6 @@ class MyApp:
             card.dot.configure(fg=color)
             card.accent.configure(bg=color)
             card.value_label.configure(text=stopped_text, fg=COLORS["text_dim"])
-
-    def _build_toolbar(self):
-        wrap = _panel(self.root)
-        wrap.pack(fill=tk.X, padx=24, pady=(14, 0))
-
-        toolbar = tk.Frame(wrap.panel, bg=COLORS["surface"], padx=16, pady=14)
-        toolbar.pack(fill=tk.X)
-
-        left = tk.Frame(toolbar, bg=COLORS["surface"])
-        left.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        tk.Label(
-            left, text="快捷操作", bg=COLORS["surface"], fg=COLORS["text_dim"], font=_font(8),
-        ).pack(anchor=tk.W, pady=(0, 8))
-
-        btn_row = tk.Frame(left, bg=COLORS["surface"])
-        btn_row.pack(anchor=tk.W)
-
-        self.server_btn = self._make_btn(btn_row, "▶  启动 HTTP 服务", self.toggle_server, "success")
-        self.server_btn.pack(side=tk.LEFT, padx=(0, 8))
-
-        self.scheduler_btn = self._make_btn(btn_row, "▶  启动定时任务", self.toggle_scheduler, "primary")
-        self.scheduler_btn.pack(side=tk.LEFT, padx=(0, 8))
-
-        self.proxy_btn = self._make_btn(btn_row, "⇄  端口转发", self.open_proxy_dialog, "primary")
-        self.proxy_btn.pack(side=tk.LEFT, padx=(0, 8))
-
-        right = tk.Frame(toolbar, bg=COLORS["surface"])
-        right.pack(side=tk.RIGHT)
-
-        tk.Label(
-            right, text="窗口", bg=COLORS["surface"], fg=COLORS["text_dim"], font=_font(8),
-        ).pack(anchor=tk.E, pady=(0, 8))
-
-        win_row = tk.Frame(right, bg=COLORS["surface"])
-        win_row.pack(anchor=tk.E)
-
-        self.minimize_btn = self._make_btn(win_row, "⬇  最小化到托盘", self.minimize_to_tray, "ghost")
-        self.minimize_btn.pack(side=tk.LEFT, padx=(0, 8))
-
-        self.exit_btn = self._make_btn(win_row, "✕  退出", self.exit_app, "danger")
-        self.exit_btn.pack(side=tk.LEFT)
 
     def _build_log_area(self):
         wrap = _panel(self.root)
@@ -553,7 +546,7 @@ class MyApp:
 
     def toggle_server(self):
         if self.server.running:
-            self.server_btn.configure(state="disabled", text="⏳  停止中...")
+            self.server_btn.configure(state="disabled", text="⏳ …")
             self._set_status(self.server_status_frame, False, "停止中", "已停止")
 
             def _stop():
@@ -563,7 +556,7 @@ class MyApp:
             threading.Thread(target=_stop, daemon=True).start()
         else:
             self.server.start()
-            self.server_btn.configure(text="⏸  暂停 HTTP 服务")
+            self.server_btn.configure(text="⏸ HTTP")
             self._set_status(self.server_status_frame, True, "运行中", "已停止")
             self.print_to_gui("[Server] HTTP 服务已启动")
             if not self.scheduler.running:
@@ -571,18 +564,18 @@ class MyApp:
                 self._update_scheduler_ui()
 
     def _on_server_stopped(self):
-        self.server_btn.configure(state="normal", text="▶  启动 HTTP 服务")
+        self.server_btn.configure(state="normal", text="▶ HTTP")
         self._set_status(self.server_status_frame, False, "运行中", "已停止")
 
     def _update_scheduler_ui(self):
         if self.scheduler.running and self.scheduler.paused:
-            self.scheduler_btn.configure(text="▶  恢复执行", variant="success")
+            self.scheduler_btn.configure(text="▶ 恢复", variant="success")
             self._set_scheduler_status_paused()
         elif self.scheduler.running:
-            self.scheduler_btn.configure(text="⏸  暂停定时任务", variant="primary")
+            self.scheduler_btn.configure(text="⏸ 定时", variant="primary")
             self._set_status(self.scheduler_status_frame, True, "运行中", "已停止")
         else:
-            self.scheduler_btn.configure(text="▶  启动定时任务", variant="primary")
+            self.scheduler_btn.configure(text="▶ 定时", variant="primary")
             self._set_status(self.scheduler_status_frame, False, "运行中", "已停止")
 
     def _set_scheduler_status_paused(self):
@@ -826,6 +819,411 @@ class MyApp:
             stop_btn.configure(state="disabled")
 
         dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        self._center_on_screen(dialog, 480, 260)
+
+    # ── 操作录制 ──────────────────────────────────────────
+
+    def open_macro_dialog(self):
+        if self._macro_dialog and self._macro_dialog.winfo_exists():
+            self._macro_dialog.lift()
+            self._macro_dialog.focus_force()
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("操作录制")
+        dialog.configure(bg=COLORS["bg"])
+        dialog.geometry("620x540")
+        dialog.resizable(True, True)
+        dialog.minsize(560, 500)
+        dialog.transient(self.root)
+        self._macro_dialog = dialog
+
+        frame = tk.Frame(dialog, bg=COLORS["bg"], padx=24, pady=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(
+            frame,
+            text="配置地址 → 开始录制（自动打开浏览器）→ 保存后可一键执行或定时运行",
+            bg=COLORS["bg"], fg=COLORS["text_dim"], font=_font(9),
+        ).pack(anchor=tk.W, pady=(0, 14))
+
+        form = tk.Frame(frame, bg=COLORS["bg"])
+        form.pack(fill=tk.X, pady=(0, 12))
+
+        name_row = tk.Frame(form, bg=COLORS["bg"])
+        name_row.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(name_row, text="名称", bg=COLORS["bg"], fg=COLORS["text"],
+                 font=_font(10), width=8, anchor=tk.W).pack(side=tk.LEFT)
+        name_var = tk.StringVar(value="我的操作")
+        name_entry = tk.Entry(
+            name_row, textvariable=name_var, font=_font(10),
+            bg=COLORS["surface"], fg=COLORS["text"], relief=tk.FLAT,
+            highlightbackground=COLORS["border"], highlightthickness=1,
+        )
+        name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6)
+
+        url_row = tk.Frame(form, bg=COLORS["bg"])
+        url_row.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(url_row, text="目标地址", bg=COLORS["bg"], fg=COLORS["text"],
+                 font=_font(10), width=8, anchor=tk.W).pack(side=tk.LEFT)
+        default_url = Config.get("server.clickUrl", "https://example.com")
+        url_var = tk.StringVar(value=default_url)
+        url_entry = tk.Entry(
+            url_row, textvariable=url_var, font=_font(10),
+            bg=COLORS["surface"], fg=COLORS["text"], relief=tk.FLAT,
+            highlightbackground=COLORS["border"], highlightthickness=1,
+        )
+        url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6)
+
+        wait_row = tk.Frame(form, bg=COLORS["bg"])
+        wait_row.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(wait_row, text="等待秒数", bg=COLORS["bg"], fg=COLORS["text"],
+                 font=_font(10), width=8, anchor=tk.W).pack(side=tk.LEFT)
+        wait_var = tk.StringVar(value="5")
+        wait_entry = tk.Entry(
+            wait_row, textvariable=wait_var, font=_font(10), width=8,
+            bg=COLORS["surface"], fg=COLORS["text"], relief=tk.FLAT,
+            highlightbackground=COLORS["border"], highlightthickness=1,
+        )
+        wait_entry.pack(side=tk.LEFT, ipady=6)
+        tk.Label(wait_row, text="执行/回放前等待页面加载", bg=COLORS["bg"],
+                 fg=COLORS["text_dim"], font=_font(8)).pack(side=tk.LEFT, padx=(10, 0))
+
+        status_label = tk.Label(
+            frame, text="就绪 — 按 F9 可结束录制",
+            bg=COLORS["accent_light"], fg=COLORS["accent"],
+            font=_font(9), padx=10, pady=6, anchor=tk.W,
+        )
+        status_label.pack(fill=tk.X, pady=(0, 10))
+
+        btn_area = tk.Frame(frame, bg=COLORS["bg"])
+        btn_row_main = tk.Frame(btn_area, bg=COLORS["bg"])
+        btn_row_main.pack(fill=tk.X)
+        btn_row_actions = tk.Frame(btn_area, bg=COLORS["bg"])
+        btn_row_actions.pack(fill=tk.X, pady=(6, 0))
+
+        record_btn = RoundedButton(btn_row_main, text="● 开始录制", variant="danger", bg=COLORS["bg"], compact=True)
+        record_btn.pack(side=tk.LEFT, padx=(0, 6))
+        stop_btn = RoundedButton(btn_row_main, text="■ 停止并保存", variant="success", bg=COLORS["bg"], compact=True)
+        stop_btn.pack(side=tk.LEFT, padx=(0, 6))
+        play_btn = RoundedButton(btn_row_main, text="▶ 执行", variant="primary", bg=COLORS["bg"], compact=True)
+        play_btn.pack(side=tk.LEFT, padx=(0, 6))
+        schedule_btn = RoundedButton(btn_row_main, text="⏰ 定时", variant="ghost", bg=COLORS["bg"], compact=True)
+        schedule_btn.pack(side=tk.LEFT, padx=(0, 6))
+
+        delete_btn = RoundedButton(btn_row_actions, text="删除", variant="ghost", bg=COLORS["bg"], compact=True)
+        delete_btn.pack(side=tk.LEFT, padx=(0, 6))
+        refresh_btn = RoundedButton(btn_row_actions, text="刷新", variant="ghost", bg=COLORS["bg"], compact=True)
+        refresh_btn.pack(side=tk.LEFT, padx=(0, 6))
+        close_btn = RoundedButton(
+            btn_row_actions, text="关闭", command=dialog.destroy, variant="ghost", bg=COLORS["bg"], compact=True,
+        )
+        close_btn.pack(side=tk.RIGHT)
+
+        btn_area.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
+
+        list_wrap = tk.Frame(
+            frame, bg=COLORS["surface"],
+            highlightbackground=COLORS["border"], highlightthickness=1,
+        )
+        list_wrap.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+
+        columns = ("name", "url", "events", "schedule")
+        tree = ttk.Treeview(list_wrap, columns=columns, show="headings", height=6)
+        tree.heading("name", text="名称")
+        tree.heading("url", text="地址")
+        tree.heading("events", text="步骤数")
+        tree.heading("schedule", text="定时")
+        tree.column("name", width=100, minwidth=80)
+        tree.column("url", width=220, minwidth=120)
+        tree.column("events", width=60, anchor=tk.CENTER)
+        tree.column("schedule", width=80, anchor=tk.CENTER)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll = ttk.Scrollbar(list_wrap, orient=tk.VERTICAL, command=tree.yview)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        tree.configure(yscrollcommand=scroll.set)
+
+        stop_btn.configure(state="disabled")
+
+        def _apply_macros(macros):
+            for item in tree.get_children():
+                tree.delete(item)
+            for macro in macros:
+                macro_id = macro.get("id") or macro.get("_id")
+                if not macro_id:
+                    continue
+                sched = macro.get("schedule") or {}
+                sched_text = sched.get("time", "-") if sched.get("enabled") else "未启用"
+                tree.insert("", tk.END, iid=macro_id, values=(
+                    macro.get("name", ""),
+                    macro.get("url", "")[:40],
+                    len(macro.get("events", [])),
+                    sched_text,
+                ))
+            if not self._recording:
+                status_label.configure(
+                    text="就绪 — 按 F9 可结束录制",
+                    bg=COLORS["accent_light"], fg=COLORS["accent"],
+                )
+
+        def _refresh_list(show_loading=True):
+            if show_loading and not self._recording:
+                status_label.configure(
+                    text="正在从服务端加载列表...",
+                    bg=COLORS["warning"], fg="#ffffff",
+                )
+
+            def _load():
+                try:
+                    macros = list_macros()
+                except MacroApiError as e:
+                    self.root.after(0, lambda: (
+                        self.print_to_gui(f"[Macro] 加载失败: {e}", tag="error"),
+                        status_label.configure(
+                            text="加载失败，请点击「刷新」重试",
+                            bg=COLORS["danger_light"], fg=COLORS["danger"],
+                        ) if not self._recording else None,
+                    ))
+                    return
+                self.root.after(0, lambda: _apply_macros(macros))
+
+            threading.Thread(target=_load, daemon=True).start()
+
+        def _parse_url():
+            url = url_var.get().strip()
+            if not url.startswith(("http://", "https://")):
+                self.print_to_gui("地址需以 http:// 或 https:// 开头", tag="warn")
+                return None
+            return url
+
+        def _parse_wait():
+            try:
+                w = int(wait_var.get().strip())
+                return max(1, min(w, 120))
+            except ValueError:
+                return 5
+
+        def _set_recording_ui(recording):
+            self._recording = recording
+            if recording:
+                status_label.configure(
+                    text="● 录制中 — 在浏览器中操作，完成后按 F9 或点击「停止并保存」",
+                    bg=COLORS["danger_light"], fg=COLORS["danger"],
+                )
+                record_btn.configure(state="disabled")
+                stop_btn.configure(state="normal")
+                name_entry.configure(state="disabled")
+                url_entry.configure(state="disabled")
+                wait_entry.configure(state="disabled")
+            else:
+                status_label.configure(
+                    text="就绪 — 按 F9 可结束录制",
+                    bg=COLORS["accent_light"], fg=COLORS["accent"],
+                )
+                record_btn.configure(state="normal")
+                stop_btn.configure(state="disabled")
+                name_entry.configure(state="normal")
+                url_entry.configure(state="normal")
+                wait_entry.configure(state="normal")
+
+        def _start_record():
+            url = _parse_url()
+            if url is None:
+                return
+            name = name_var.get().strip() or "未命名操作"
+            wait_sec = _parse_wait()
+
+            def _do_record():
+                open_browser(url, self.print_to_gui)
+                self.root.after(0, lambda: status_label.configure(
+                    text=f"浏览器已打开，{wait_sec}s 后开始录制...",
+                    bg=COLORS["warning"], fg="#ffffff",
+                ))
+                time.sleep(wait_sec)
+                try:
+                    self.macro_recorder.start()
+                except RuntimeError as e:
+                    self.root.after(0, lambda: self.print_to_gui(str(e), tag="error"))
+                    return
+                self.root.after(0, _set_recording_ui, True)
+                events = self.macro_recorder.wait_until_stopped()
+                macro = {
+                    "_id": str(uuid.uuid4()),
+                    "name": name,
+                    "url": url,
+                    "wait_seconds": wait_sec,
+                    "events": events,
+                }
+                try:
+                    save_macro(macro)
+                except MacroApiError as e:
+                    self.root.after(0, lambda: (
+                        _set_recording_ui(False),
+                        self.print_to_gui(f"[Macro] 保存失败: {e}", tag="error"),
+                    ))
+                    return
+                self.root.after(0, lambda: (
+                    _set_recording_ui(False),
+                    _refresh_list(show_loading=False),
+                    self.print_to_gui(f"[Macro] 已保存「{name}」，共 {len(events)} 步", tag="success"),
+                ))
+
+            threading.Thread(target=_do_record, daemon=True).start()
+
+        def _stop_record():
+            if self.macro_recorder.recording:
+                self.macro_recorder.stop()
+
+        def _get_selected_id():
+            sel = tree.selection()
+            if not sel:
+                self.print_to_gui("请先在列表中选择一条录制", tag="warn")
+                return None
+            return sel[0]
+
+        def _play_selected():
+            macro_id = _get_selected_id()
+            if not macro_id:
+                return
+            macro = load_macro(macro_id)
+            if not macro:
+                self.print_to_gui("录制文件不存在", tag="warn")
+                return
+            play_btn.configure(state="disabled")
+
+            def _run():
+                self.macro_player.play(macro)
+                self.root.after(0, lambda: play_btn.configure(state="normal"))
+
+            threading.Thread(target=_run, daemon=True).start()
+
+        def _delete_selected():
+            macro_id = _get_selected_id()
+            if not macro_id:
+                return
+            macro = load_macro(macro_id)
+            name = macro.get("name", macro_id) if macro else macro_id
+
+            def _do_delete():
+                try:
+                    delete_macro(macro_id)
+                except MacroApiError as e:
+                    self.root.after(0, lambda: self.print_to_gui(f"[Macro] 删除失败: {e}", tag="error"))
+                    return
+                self.root.after(0, lambda: (
+                    _refresh_list(show_loading=False),
+                    self.print_to_gui(f"[Macro] 已删除「{name}」", tag="success"),
+                ))
+
+            threading.Thread(target=_do_delete, daemon=True).start()
+
+        def _open_schedule():
+            macro_id = _get_selected_id()
+            if not macro_id:
+                return
+            macro = load_macro(macro_id)
+            if not macro:
+                return
+
+            sched_dialog = tk.Toplevel(dialog)
+            sched_dialog.title("定时执行")
+            sched_dialog.configure(bg=COLORS["bg"])
+            sched_dialog.geometry("360x200")
+            sched_dialog.resizable(False, False)
+            sched_dialog.transient(dialog)
+            sched_dialog.grab_set()
+
+            sf = tk.Frame(sched_dialog, bg=COLORS["bg"], padx=24, pady=20)
+            sf.pack(fill=tk.BOTH, expand=True)
+
+            schedule = macro.get("schedule") or {}
+            enabled_var = tk.BooleanVar(value=bool(schedule.get("enabled")))
+            time_var = tk.StringVar(value=schedule.get("time", "09:00"))
+
+            tk.Checkbutton(
+                sf, text="启用每日定时执行", variable=enabled_var,
+                bg=COLORS["bg"], fg=COLORS["text"], font=_font(10),
+                activebackground=COLORS["bg"], selectcolor=COLORS["surface"],
+            ).pack(anchor=tk.W, pady=(0, 12))
+
+            tr = tk.Frame(sf, bg=COLORS["bg"])
+            tr.pack(fill=tk.X, pady=(0, 16))
+            tk.Label(tr, text="执行时间", bg=COLORS["bg"], fg=COLORS["text"],
+                     font=_font(10), width=8, anchor=tk.W).pack(side=tk.LEFT)
+            tk.Entry(
+                tr, textvariable=time_var, font=_font(10), width=10,
+                bg=COLORS["surface"], fg=COLORS["text"], relief=tk.FLAT,
+                highlightbackground=COLORS["border"], highlightthickness=1,
+            ).pack(side=tk.LEFT, ipady=6)
+            tk.Label(tr, text="格式 HH:MM，如 09:30", bg=COLORS["bg"],
+                     fg=COLORS["text_dim"], font=_font(8)).pack(side=tk.LEFT, padx=(8, 0))
+
+            br = tk.Frame(sf, bg=COLORS["bg"])
+            br.pack(fill=tk.X)
+
+            def _save_schedule():
+                t = time_var.get().strip()
+                if enabled_var.get():
+                    parts = t.split(":")
+                    if len(parts) != 2:
+                        self.print_to_gui("时间格式应为 HH:MM", tag="warn")
+                        return
+                    try:
+                        h, m = int(parts[0]), int(parts[1])
+                        if not (0 <= h <= 23 and 0 <= m <= 59):
+                            raise ValueError
+                    except ValueError:
+                        self.print_to_gui("时间无效，请使用 00:00 - 23:59", tag="warn")
+                        return
+                macro["schedule"] = {
+                    "enabled": enabled_var.get(),
+                    "time": t,
+                    "last_run": schedule.get("last_run", ""),
+                }
+
+                def _do_save():
+                    try:
+                        save_macro(macro)
+                    except MacroApiError as e:
+                        self.root.after(0, lambda: self.print_to_gui(f"[Macro] 定时保存失败: {e}", tag="error"))
+                        return
+                    self.root.after(0, lambda: (
+                        _refresh_list(show_loading=False),
+                        self.print_to_gui(
+                            f"[Macro] 「{macro.get('name')}」定时已{'启用' if enabled_var.get() else '关闭'}",
+                            tag="success",
+                        ),
+                        sched_dialog.destroy(),
+                    ))
+
+                threading.Thread(target=_do_save, daemon=True).start()
+
+            RoundedButton(br, text="保存", command=_save_schedule, variant="success", bg=COLORS["bg"]).pack(side=tk.LEFT)
+            RoundedButton(br, text="取消", command=sched_dialog.destroy, variant="ghost", bg=COLORS["bg"]).pack(side=tk.RIGHT)
+            self._center_on_screen(sched_dialog, 360, 200)
+
+        record_btn.configure(command=_start_record)
+        stop_btn.configure(command=_stop_record)
+        play_btn.configure(command=_play_selected)
+        schedule_btn.configure(command=_open_schedule)
+        delete_btn.configure(command=_delete_selected)
+        refresh_btn.configure(command=_refresh_list)
+
+        def _on_tree_select(_event=None):
+            sel = tree.selection()
+            if not sel:
+                return
+            macro = load_macro(sel[0])
+            if macro:
+                name_var.set(macro.get("name", ""))
+                url_var.set(macro.get("url", ""))
+                wait_var.set(str(macro.get("wait_seconds", 5)))
+
+        tree.bind("<<TreeviewSelect>>", _on_tree_select)
+
+        _refresh_list()
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        self._center_on_screen(dialog, 620, 540)
 
     # ── 系统托盘 ──────────────────────────────────────────
 
@@ -881,15 +1279,36 @@ class MyApp:
     def show_window(self, icon=None, item=None):
         self.root.after(0, self._show_window)
 
+    def _center_on_screen(self, window, width=None, height=None):
+        window.update_idletasks()
+        w = width or window.winfo_width()
+        h = height or window.winfo_height()
+        x = max(0, (window.winfo_screenwidth() - w) // 2)
+        y = max(0, (window.winfo_screenheight() - h) // 2)
+        window.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _center_window(self, width=None, height=None):
+        self._center_on_screen(self.root, width, height)
+
     def _show_window(self):
+        self.is_minimized = False
+        self._center_window()
         self.root.deiconify()
+        self.root.state("normal")
         self.root.lift()
         self.root.focus_force()
-        self.is_minimized = False
+
+    def _on_root_unmap(self, event):
+        if event.widget != self.root or self.is_minimized:
+            return
+        if self.root.state() == "iconic":
+            self.root.after(0, self.minimize_to_tray)
 
     def minimize_to_tray(self):
-        self.root.withdraw()
+        if self.is_minimized:
+            return
         self.is_minimized = True
+        self.root.withdraw()
         self.print_to_gui("程序已最小化到系统托盘")
 
     def toggle_server_from_tray(self, icon=None, item=None):
@@ -899,10 +1318,7 @@ class MyApp:
         self.root.after(0, self.toggle_scheduler)
 
     def on_closing(self):
-        if self.is_minimized:
-            self.root.withdraw()
-        else:
-            self.minimize_to_tray()
+        self._quit_app()
 
     def quit_app(self, icon=None, item=None):
         self.root.after(0, self._quit_app)
@@ -920,6 +1336,8 @@ class MyApp:
             self.proxy.stop()
         if self.scheduler.running:
             self.scheduler.stop()
+        if self.macro_scheduler.running:
+            self.macro_scheduler.stop()
         if self.tray_icon:
             self.tray_icon.stop()
         self.root.quit()
@@ -927,5 +1345,7 @@ class MyApp:
 
 def run():
     root = tk.Tk()
+    root.withdraw()
     MyApp(root)
+    root.deiconify()
     root.mainloop()

@@ -7,4 +7,5 @@ pystray
 Pillow
 requests
 pyautogui
+pynput
 uuid
